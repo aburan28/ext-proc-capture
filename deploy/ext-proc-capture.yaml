@@ -1,0 +1,88 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ext-proc-capture
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: capture-data
+  namespace: ext-proc-capture
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ext-proc-capture
+  namespace: ext-proc-capture
+  labels:
+    app: ext-proc-capture
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ext-proc-capture
+  template:
+    metadata:
+      labels:
+        app: ext-proc-capture
+    spec:
+      containers:
+        - name: ext-proc-capture
+          image: ext-proc-capture:latest
+          ports:
+            - containerPort: 9002
+              protocol: TCP
+              name: grpc
+          env:
+            - name: EXT_PROC_PORT
+              value: "9002"
+            - name: CAPTURE_DIR
+              value: /captures
+            - name: SAMPLE_RATE
+              value: "0.1"           # capture 10% of traffic; set to 1.0 for 100%
+          volumeMounts:
+            - name: captures
+              mountPath: /captures
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          readinessProbe:
+            grpc:
+              port: 9002
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            grpc:
+              port: 9002
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      volumes:
+        - name: captures
+          persistentVolumeClaim:
+            claimName: capture-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ext-proc-capture
+  namespace: ext-proc-capture
+  labels:
+    app: ext-proc-capture
+spec:
+  selector:
+    app: ext-proc-capture
+  ports:
+    - port: 9002
+      targetPort: grpc
+      protocol: TCP
+      name: grpc

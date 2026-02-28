@@ -1,0 +1,69 @@
+# ReferenceGrant allows the EnvoyExtensionPolicy in the target namespace
+# to reference the ext-proc-capture Service across namespaces.
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: ext-proc-capture-ref
+  namespace: ext-proc-capture
+spec:
+  from:
+    - group: gateway.envoyproxy.io
+      kind: EnvoyExtensionPolicy
+      namespace: default
+  to:
+    - group: ""
+      kind: Service
+---
+# Example: capture traffic for a specific HTTPRoute.
+# Duplicate this resource (with a different name and targetRef) for each
+# route you want to instrument.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyExtensionPolicy
+metadata:
+  name: capture-httproute
+  namespace: default
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: myapp                    # <-- replace with your HTTPRoute name
+  extProc:
+    - backendRefs:
+        - group: ""
+          kind: Service
+          name: ext-proc-capture
+          namespace: ext-proc-capture
+          port: 9002
+      failOpen: true
+      messageTimeout: 1s
+      processingMode:
+        request:
+          body: Streamed
+        response:
+          body: Streamed
+---
+# Example: capture traffic for a specific GRPCRoute.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyExtensionPolicy
+metadata:
+  name: capture-grpcroute
+  namespace: default
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: GRPCRoute
+      name: mygrpcapp                # <-- replace with your GRPCRoute name
+  extProc:
+    - backendRefs:
+        - group: ""
+          kind: Service
+          name: ext-proc-capture
+          namespace: ext-proc-capture
+          port: 9002
+      failOpen: true
+      messageTimeout: 1s
+      processingMode:
+        request:
+          body: Streamed
+        response:
+          body: Streamed
