@@ -1,0 +1,177 @@
+# Simple echo backend for e2e testing
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: echo-backend
+  namespace: default
+  labels:
+    app: echo-backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: echo-backend
+  template:
+    metadata:
+      labels:
+        app: echo-backend
+    spec:
+      containers:
+        - name: echo
+          image: gcr.io/k8s-staging-gateway-api/echo-basic:v20231214-v1.0.0-140-gf544a46e
+          ports:
+            - containerPort: 3000
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: echo-backend
+  namespace: default
+spec:
+  selector:
+    app: echo-backend
+  ports:
+    - port: 3000
+      targetPort: 3000
+      protocol: TCP
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: e2e-test-route
+  namespace: default
+spec:
+  parentRefs:
+    - name: eg
+  hostnames:
+    - "e2e.test.local"
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: echo-backend
+          port: 3000
+---
+# ext-proc-capture namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ext-proc-capture
+---
+# Deployment with 100% sample rate for deterministic tests
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ext-proc-capture
+  namespace: ext-proc-capture
+  labels:
+    app: ext-proc-capture
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ext-proc-capture
+  template:
+    metadata:
+      labels:
+        app: ext-proc-capture
+    spec:
+      containers:
+        - name: ext-proc-capture
+          image: ext-proc-capture:e2e
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 9002
+              protocol: TCP
+              name: grpc
+          env:
+            - name: EXT_PROC_PORT
+              value: "9002"
+            - name: CAPTURE_DIR
+              value: /captures
+            - name: SAMPLE_RATE
+              value: "1.0"
+          volumeMounts:
+            - name: captures
+              mountPath: /captures
+          readinessProbe:
+            grpc:
+              port: 9002
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            grpc:
+              port: 9002
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      volumes:
+        - name: captures
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ext-proc-capture
+  namespace: ext-proc-capture
+  labels:
+    app: ext-proc-capture
+spec:
+  selector:
+    app: ext-proc-capture
+  ports:
+    - port: 9002
+      targetPort: grpc
+      protocol: TCP
+      name: grpc
+---
+# ReferenceGrant for cross-namespace Service reference
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: ext-proc-capture-ref
+  namespace: ext-proc-capture
+spec:
+  from:
+    - group: gateway.envoyproxy.io
+      kind: EnvoyExtensionPolicy
+      namespace: default
+  to:
+    - group: ""
+      kind: Service
+---
+# EnvoyExtensionPolicy targeting the e2e test HTTPRoute
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyExtensionPolicy
+metadata:
+  name: e2e-capture
+  namespace: default
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: e2e-test-route
+  extProc:
+    - backendRefs:
+        - group: ""
+          kind: Service
+          name: ext-proc-capture
+          namespace: ext-proc-capture
+          port: 9002
+      failOpen: true
+      messageTimeout: 5s
+      processingMode:
+        request:
+          body: Buffered
+        response:
+          body: Buffered
